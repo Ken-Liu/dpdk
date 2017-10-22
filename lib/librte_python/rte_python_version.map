@@ -1,0 +1,12 @@
+DPDK_2.0 {
+	global:
+
+	rte_python_init;
+	rte_python_close;
+	rte_python_scapy_to_mbuf;
+	rte_python_scapy_dump;
+	rte_python_shell;
+	rte_python_eval;
+
+	local: *;
+};
