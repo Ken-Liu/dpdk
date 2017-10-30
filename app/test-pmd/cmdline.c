@@ -105,7 +105,7 @@
 #include "cmdline_mtr.h"
 #include "cmdline_tm.h"
 
-static struct cmdline *testpmd_cl;
+struct cmdline *testpmd_cl;
 
 static void cmd_reconfig_device_queue(portid_t id, uint8_t dev, uint8_t queue);
 
@@ -15595,6 +15595,12 @@ cmdline_parse_inst_t cmd_py_run = {
 /* ******************************************************************************** */
 
 extern cmdline_parse_inst_t cmd_pktgen_cmd;
+extern cmdline_parse_inst_t cmd_expect_short;
+extern cmdline_parse_inst_t cmd_expect;
+extern cmdline_parse_inst_t cmd_tx;
+extern cmdline_parse_inst_t cmd_tx_short;
+extern cmdline_parse_inst_t cmd_rx;
+extern cmdline_parse_inst_t cmd_rx_short;
 
 /* list of instructions */
 cmdline_parse_ctx_t main_ctx[] = {
@@ -15604,6 +15610,12 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_load_from_file,
 #ifdef RTE_LIBRTE_PYTHON
 	(cmdline_parse_inst_t *)&cmd_py_run,
+	(cmdline_parse_inst_t *)&cmd_expect_short,
+	(cmdline_parse_inst_t *)&cmd_expect,
+	(cmdline_parse_inst_t *)&cmd_tx_short,
+	(cmdline_parse_inst_t *)&cmd_tx,
+	(cmdline_parse_inst_t *)&cmd_rx_short,
+	(cmdline_parse_inst_t *)&cmd_rx,
 #endif
 	(cmdline_parse_inst_t *)&cmd_pktgen_cmd,
 	(cmdline_parse_inst_t *)&cmd_showport,

@@ -34,6 +34,8 @@
 #ifndef _TESTPMD_H_
 #define _TESTPMD_H_
 
+#include <cmdline_parse.h>
+
 #include <rte_pci.h>
 #include <rte_bus_pci.h>
 #include <rte_gro.h>
@@ -365,6 +367,8 @@ extern uint8_t flow_isolate_all; /**< set by "--flow-isolate-all */
 extern uint8_t  mp_anon; /**< set by "--mp-anon" parameter */
 extern uint8_t no_link_check; /**<set by "--disable-link-check" parameter */
 extern volatile int test_done; /* stop packet forwarding when set to 1. */
+extern cmdline_parse_ctx_t main_ctx[]; /* command line parser */
+extern struct cmdline *testpmd_cl;
 extern uint8_t lsc_interrupt; /**< disabled by "--no-lsc-interrupt" parameter */
 extern uint8_t rmv_interrupt; /**< disabled by "--no-rmv-interrupt" parameter */
 extern uint32_t event_print_mask;

@@ -83,7 +83,6 @@
 #define PKTGEN_ROUND_END 0x1
 #define PKTGEN_TASK_END 0x0
 #define PKTGEN_TASK_START 0x3
-
 struct pktgen_task_stats{
 	uint8_t active;
 	uint16_t round;		/* number txrx */
@@ -566,6 +565,495 @@ struct fwd_engine pktgen_engine = {
 /* Control thread functions                             */
 /********************************************************/
 
+#ifdef RTE_LIBRTE_PYTHON
+
+#define US_TSC(us) ((us) * (rte_get_timer_hz() / 1000000L));
+#define TSC_US(tsc) ((tsc) * 1e6 / rte_get_timer_hz())
+
+struct cmd_pktgen_cmd {
+	cmdline_fixed_string_t cmd;
+	cmdline_fixed_string_t pattern;
+	portid_t port;
+	uint64_t count;
+	uint64_t round;
+	uint16_t timeout; /* unit: ms */
+	uint16_t verbose;
+	struct pktgen_task_stats stats;
+};
+
+struct cmd_pg_txrx_cmd {
+	cmdline_fixed_string_t expect;
+	struct cmd_pktgen_cmd tx;
+	struct cmd_pktgen_cmd rx;
+	cmdline_fixed_string_t field;
+	uint64_t val;
+};
+
+/*
+ * get min/max time and count sum
+ */
+static void
+cmd_pg_port_poll(portid_t port, struct pktgen_task_stats *sum, int tx)
+{
+	struct pktgen_task* task;
+	queueid_t i, n;
+
+	n = tx ? nb_txq : nb_rxq;
+	for (i = 0, sum->count = 0; i < n; i++) {
+		task = tx ? task_tx(port, i) : task_rx(port, i);
+		sum->count += task->stats.count;
+		if (task->stats.round > sum->round)
+			sum->round = task->stats.round;
+		if (task->stats.start) {
+			if (sum->start && task->stats.start < sum->start)
+				sum->start = task->stats.start;
+			if (!sum->start)
+				sum->start = task->stats.start;
+			if (sum->end < task->stats.end)
+				sum->end = task->stats.end;
+		}
+	}
+}
+
+static int
+cmd_pg_scapy_to_mbuf(char *scapy, portid_t port, struct pktgen_task *task)
+{
+	int socket;
+	struct rte_mempool *pool;
+
+	socket = port_numa[port];
+	if (socket == NUMA_NO_CONFIG)
+		socket = ports[port].socket_id;
+	pool = mbuf_pool_find(socket);
+	task->data = rte_python_scapy_to_mbufs(pool, scapy, &task->cnt_mbufs);
+	return !task->data;
+}
+
+static inline int
+cmd_pg_init(void)
+{
+	if (rte_python_init())
+		return -1;
+	if (pktgen_idle_mode != 0) {
+		pg_idle_set(0);
+		rte_delay_ms(1);
+	}
+	if (cur_fwd_eng != &pktgen_engine) {
+		set_pkt_forwarding_mode(pktgen_engine.fwd_mode_name);
+		if (!test_done)
+			stop_packet_forwarding();
+	}
+	if (test_done)
+		start_packet_forwarding(0);
+	/* reset task memory */
+	RTE_ASSERT(pktgen_tx_tasks && pktgen_rx_tasks);
+	memset(pktgen_tx_tasks, 0,
+			nb_ports * nb_txq * sizeof(struct pktgen_task));
+	memset(pktgen_rx_tasks, 0,
+			nb_ports * nb_rxq * sizeof(struct pktgen_task));
+	return 0;
+}
+
+static void
+cmd_pg_cleanup(struct cmd_pg_txrx_cmd *cmd)
+{
+	struct pktgen_task *task;
+	queueid_t q;
+	uint16_t m;
+
+	RTE_ASSERT(pktgen_tx_tasks && pktgen_rx_tasks);
+	/* free all tx queue mbufs */
+	for (q = 0; cmd->tx.count && q < nb_txq; q++) {
+		task = task_tx(cmd->tx.port, q);
+		if (!task->data)
+			continue;
+		m = task->cnt_mbufs;
+		while(m)
+			rte_pktmbuf_free(pg_task_template_get(task, --m));
+		task->data = NULL;
+	}
+}
+
+static void
+cmd_pg_rx(struct cmd_pg_txrx_cmd *cmd)
+{
+	struct pktgen_task *task;
+	int i;
+
+	RTE_ASSERT(cmd);
+	memset(&cmd->rx.stats, 0, sizeof(cmd->rx.stats));
+	for (i = 0; i < nb_rxq; i++) {
+		task = task_rx(cmd->rx.port, i);
+		if (cmd->tx.count)
+			task->data = task_tx(cmd->tx.port, 0);
+		task->count = cmd->rx.count;
+		task->round = cmd->rx.round;
+		task->verbose = cmd->rx.verbose & 0xff;
+		if (cmd->field && strlen(cmd->field)) {
+				task->field = cmd->field;
+				task->val = cmd->val;
+		}
+		task->stats.active = PKTGEN_TASK_START;
+	}
+}
+
+static int
+cmd_pg_tx(struct cmd_pktgen_cmd* cmd, int txrx)
+{
+	struct pktgen_task *task;
+
+	RTE_ASSERT(cmd);
+	task = task_tx(cmd->port, 0);
+	if (cmd_pg_scapy_to_mbuf(cmd->pattern, cmd->port, task))
+		return -1;
+	/* send out using queue 0 */
+	memset(&cmd->stats, 0, sizeof(cmd->stats));
+	if (cmd->count == UINT64_MAX)
+		cmd->count = task->cnt_mbufs;
+	task->count = cmd->count;
+	task->round = cmd->round;
+	task->verbose = cmd->verbose & 0xff;
+	task->txrx = txrx;
+	task->stats.active = PKTGEN_TASK_START;
+	return 0;
+}
+
+static void
+cmd_pg_wait(struct cmdline *cl, struct cmd_pktgen_cmd* cmd,
+		uint64_t timeout, int tx)
+{
+	char c = 0;
+	int flags;
+
+	flags = fcntl(cl->s_in, F_GETFL, 0);
+	RTE_ASSERT(flags >= 0);
+	fcntl(cl->s_in, F_SETFL, flags | O_NONBLOCK);
+	memset(&cmd->stats, 0, sizeof(cmd->stats));
+	while (1) {
+		cmd_pg_port_poll(cmd->port, &cmd->stats, tx);
+		if (cmd->count && cmd->round == cmd->stats.round)
+			break;
+		if (timeout && rte_rdtsc() > timeout)
+			break;
+		/* detect ctrl+c or ctrl+d */
+		if (!timeout && read(cl->s_in, &c, 1) && (c == 3 || c == 4))
+			break;
+		rte_delay_ms(1);
+	}
+	if (!cmd->stats.end)
+		cmd->stats.end = rte_rdtsc();
+	fcntl(cl->s_in, F_SETFL, flags);
+}
+
+/* expect command */
+cmdline_parse_token_string_t cmd_expect_cmd =
+	TOKEN_STRING_INITIALIZER(struct cmd_pg_txrx_cmd, expect, "expect");
+cmdline_parse_token_num_t cmd_expect_tx_port =
+	TOKEN_NUM_INITIALIZER(struct cmd_pg_txrx_cmd, tx.port, UINT16);
+cmdline_parse_token_num_t cmd_expect_rx_port =
+	TOKEN_NUM_INITIALIZER(struct cmd_pg_txrx_cmd, rx.port, UINT16);
+cmdline_parse_token_string_t cmd_expect_pattern =
+	TOKEN_STRING_INITIALIZER(struct cmd_pg_txrx_cmd, tx.pattern, NULL);
+cmdline_parse_token_num_t cmd_expect_count =
+	TOKEN_NUM_INITIALIZER(struct cmd_pg_txrx_cmd, tx.count, UINT64);
+cmdline_parse_token_num_t cmd_expect_round =
+	TOKEN_NUM_INITIALIZER(struct cmd_pg_txrx_cmd, tx.round, UINT64);
+cmdline_parse_token_num_t cmd_expect_rx_timeout =
+	TOKEN_NUM_INITIALIZER(struct cmd_pg_txrx_cmd, rx.timeout, UINT64);
+cmdline_parse_token_num_t cmd_expect_verbose =
+	TOKEN_NUM_INITIALIZER(struct cmd_pg_txrx_cmd, tx.verbose, UINT16);
+cmdline_parse_token_string_t cmd_expect_field =
+	TOKEN_STRING_INITIALIZER(struct cmd_pg_txrx_cmd, field, NULL);
+cmdline_parse_token_num_t cmd_expect_val =
+	TOKEN_NUM_INITIALIZER(struct cmd_pg_txrx_cmd, val, UINT64);
+
+static void
+cmd_expect_parsed(
+	void *parsed_result,
+	__attribute__((unused)) struct cmdline *cl,
+	__attribute__((unused)) void *data)
+{
+	struct cmd_pg_txrx_cmd *cmd = parsed_result;
+	struct pktgen_task_stats *stats_tx = &cmd->tx.stats;
+	struct pktgen_task_stats *stats_rx = &cmd->rx.stats;
+	uint64_t timeout = 0;
+
+	if (port_id_is_invalid(cmd->tx.port, ENABLED_WARN) ||
+		port_id_is_invalid(cmd->rx.port, ENABLED_WARN))
+		return;
+	if (cmd_pg_init())
+		return;
+	if (!strcmp(cmd->field, "non") || !strcmp(cmd->field, "0"))
+		cmd->field[0] = 0;
+	cmd->rx.verbose = cmd->tx.verbose & 0xff;
+	cmd->tx.verbose = cmd->tx.verbose >> 8;
+	cmd->rx.round = cmd->tx.round;
+	cmd->rx.count = cmd->tx.count;
+	if (cmd->tx.count == 0)
+		cmd->tx.count = UINT64_MAX;
+	/* prepare task */
+	if (cmd_pg_tx(&cmd->tx, 1))
+		return;
+	if (cmd->rx.count == UINT64_MAX)
+		cmd->rx.count = cmd->tx.count;
+	cmd_pg_rx(cmd);
+	/* wait task */
+	if (cmd->rx.timeout)
+		timeout = rte_rdtsc() + US_TSC(cmd->rx.timeout * 1000) ;
+	pktgen_busy = 1;
+	cmd_pg_wait(cl, &cmd->tx, timeout, 1);
+	cmd_pg_wait(cl, &cmd->rx, timeout, 0);
+	pktgen_busy = 0;
+	/* print stats */
+	float t_tx = TSC_US(stats_tx->end - stats_tx->start);
+	float t_rx = TSC_US(stats_rx->end - stats_rx->start);
+	float t_ttl = TSC_US(RTE_MAX(stats_rx->end, stats_tx->end) -
+			RTE_MIN(stats_rx->start, stats_tx->start));
+	if (cmd->rx.count == 0)
+		stats_rx->round = 1;
+	int failed = (stats_tx->round != cmd->tx.round ||
+			stats_rx->round != cmd->rx.round ||
+			stats_rx->count != cmd->rx.count);
+	if (stats_tx->round == 0)
+		stats_tx->round = 1;
+	if (stats_rx->round == 0)
+		stats_rx->round = 1;
+	uint64_t nb_tx = stats_tx->count + cmd->tx.count * (stats_tx->round - 1);
+	uint64_t nb_rx = stats_rx->count + cmd->rx.count * (stats_rx->round - 1);
+	if (failed || !(verbose_level & 0x40)) /* mute */
+		printf("%s"
+			"tx: %lu/%lu %.3fus %fmpps"
+			"\trx: %lu/%lu %.3fus %fmpps"
+			"\tround: %u/%lu %.3fus"
+			"\ttotal: %.3fus %fmpps\n",
+			failed ? "Failed " : "",
+			nb_tx, cmd->tx.count * cmd->tx.round, t_tx, nb_tx/t_tx,
+			nb_rx, cmd->rx.count * cmd->rx.round, t_rx, nb_rx/t_rx,
+			stats_rx->round, cmd->rx.round, t_ttl / stats_rx->round,
+			t_ttl, nb_rx / t_ttl);
+	/* clean up */
+	cmd_pg_cleanup(cmd);
+}
+
+cmdline_parse_inst_t cmd_expect = {
+	.f = cmd_expect_parsed,
+	.data = NULL,
+	.help_str = "expect <tx_port> <rx_port> <scapy> <count> <round> <timeout(ms)> <verbose> <field> <val>\n"
+			"\t\t\tSend packet and expecting same back",
+	.tokens = {
+		(void *)&cmd_expect_cmd,
+		(void *)&cmd_expect_tx_port,
+		(void *)&cmd_expect_rx_port,
+		(void *)&cmd_expect_pattern,
+		(void *)&cmd_expect_count,
+		(void *)&cmd_expect_round,
+		(void *)&cmd_expect_rx_timeout,
+		(void *)&cmd_expect_verbose,
+		(void *)&cmd_expect_field,
+		(void *)&cmd_expect_val,
+		NULL,
+	},
+};
+
+static void
+cmd_expect_short_parsed(
+	void *parsed_result,
+	__attribute__((unused)) struct cmdline *cl,
+	__attribute__((unused)) void *data)
+{
+	struct cmd_pg_txrx_cmd *res = parsed_result;
+
+	/* memory not clean, have to clear unused fields */
+	res->tx.round = 1;
+	res->tx.count = UINT64_MAX; /* detect from pattern */
+	res->tx.verbose = verbose_level;
+	res->rx.timeout = 20;
+	res->rx.verbose = verbose_level & 0xff;
+	res->field[0] = 0;
+	cmd_expect_parsed(res, cl, data);
+
+}
+
+cmdline_parse_inst_t cmd_expect_short = {
+	.f = cmd_expect_short_parsed,
+	.data = NULL,
+	.help_str = "expect <tx_port> <rx_port> <scapy>: tx 1 and expect 1",
+	.tokens = {
+		(void *)&cmd_expect_cmd,
+		(void *)&cmd_expect_tx_port,
+		(void *)&cmd_expect_rx_port,
+		(void *)&cmd_expect_pattern,
+		NULL,
+	},
+};
+
+/* tx command */
+
+cmdline_parse_token_string_t cmd_tx_cmd =
+	TOKEN_STRING_INITIALIZER(struct cmd_pg_txrx_cmd, tx.cmd, "tx");
+cmdline_parse_token_string_t cmd_tx_pattern =
+	TOKEN_STRING_INITIALIZER(struct cmd_pg_txrx_cmd, tx.pattern, NULL);
+cmdline_parse_token_num_t cmd_tx_port =
+	TOKEN_NUM_INITIALIZER(struct cmd_pg_txrx_cmd, tx.port, UINT16);
+cmdline_parse_token_num_t cmd_tx_count =
+	TOKEN_NUM_INITIALIZER(struct cmd_pg_txrx_cmd, tx.count, UINT64);
+cmdline_parse_token_num_t cmd_tx_verbose =
+	TOKEN_NUM_INITIALIZER(struct cmd_pg_txrx_cmd, tx.verbose, UINT16);
+
+static void
+cmd_tx_parsed(
+	void *parsed_result,
+	__attribute__((unused)) struct cmdline *cl,
+	__attribute__((unused)) void *data)
+{
+	struct cmd_pg_txrx_cmd *cmd = parsed_result;
+
+	if (port_id_is_invalid(cmd->tx.port, ENABLED_WARN))
+		return;
+	if (cmd_pg_init())
+		return;
+	memset(&cmd->rx, 0, sizeof(cmd->rx));
+	cmd->tx.round = 1;
+	if (cmd_pg_tx(&cmd->tx, 0))
+		return;
+	pktgen_busy = 1;
+	cmd_pg_wait(cl, &cmd->tx, 0, 1);
+	pktgen_busy = 0;
+	double t = TSC_US(cmd->tx.stats.end - cmd->tx.stats.start);
+	printf("%s%lu/%lu packets sent in %.3fus %fmpps\n",
+			cmd->tx.count && cmd->tx.stats.count != cmd->tx.count ?
+					"Failed: " : "",
+			cmd->tx.stats.count, cmd->tx.count, t,
+			cmd->tx.stats.count / t);
+	cmd_pg_cleanup(cmd);
+}
+
+cmdline_parse_inst_t cmd_tx = {
+	.f = cmd_tx_parsed,
+	.data = NULL,
+	.help_str = "tx <port> <scapy> <count> <verbose>",
+	.tokens = {
+		(void *)&cmd_tx_cmd,
+		(void *)&cmd_tx_port,
+		(void *)&cmd_tx_pattern,
+		(void *)&cmd_tx_count,
+		(void *)&cmd_tx_verbose,
+		NULL,
+	},
+};
+
+static void
+cmd_tx_short_parsed(
+	void *parsed_result,
+	__attribute__((unused)) struct cmdline *cl,
+	__attribute__((unused)) void *data)
+{
+	struct cmd_pg_txrx_cmd *cmd = parsed_result;
+
+	cmd->tx.count = 0;
+	cmd->tx.verbose = verbose_level >> 8;
+	cmd_tx_parsed(cmd, cl, data);
+}
+
+cmdline_parse_inst_t cmd_tx_short = {
+	.f = cmd_tx_short_parsed,
+	.data = NULL,
+	.help_str = "tx <port> <scapy>: tx 0 Ether()/IP()/UDP()",
+	.tokens = {
+		(void *)&cmd_tx_cmd,
+		(void *)&cmd_tx_port,
+		(void *)&cmd_tx_pattern,
+		NULL,
+	},
+};
+
+/* rx command */
+cmdline_parse_token_string_t cmd_rx_cmd =
+	TOKEN_STRING_INITIALIZER(struct cmd_pg_txrx_cmd, rx, "rx");
+cmdline_parse_token_num_t cmd_rx_port =
+	TOKEN_NUM_INITIALIZER(struct cmd_pg_txrx_cmd, rx.port, UINT16);
+cmdline_parse_token_num_t cmd_rx_count =
+	TOKEN_NUM_INITIALIZER(struct cmd_pg_txrx_cmd, rx.count, UINT64);
+cmdline_parse_token_num_t cmd_rx_timeout =
+	TOKEN_NUM_INITIALIZER(struct cmd_pg_txrx_cmd, rx.timeout, UINT16);
+cmdline_parse_token_num_t cmd_rx_verbose =
+	TOKEN_NUM_INITIALIZER(struct cmd_pg_txrx_cmd, rx.verbose, UINT16);
+
+/* Common result structure for rx commands */
+static void
+cmd_rx_parsed(
+	void *parsed_result,
+	__attribute__((unused)) struct cmdline *cl,
+	__attribute__((unused)) void *data)
+{
+	struct cmd_pg_txrx_cmd *cmd = parsed_result;
+	uint64_t timeout = 0;
+
+	if (port_id_is_invalid(cmd->rx.port, ENABLED_WARN))
+		return;
+	if (cmd_pg_init())
+		return;
+	memset(&cmd->tx, 0, sizeof(cmd->tx));
+	cmd->field[0] = 0;
+	cmd->rx.round = 1;
+	cmd_pg_rx(cmd);
+	if (cmd->rx.timeout)
+		timeout =  rte_rdtsc() + US_TSC(cmd->rx.timeout * 1e6);
+	pktgen_busy = 1;
+	cmd_pg_wait(cl, &cmd->rx, timeout, 0);
+	pktgen_busy = 0;
+	/* print stats */
+	float t = TSC_US(cmd->rx.stats.end - cmd->rx.stats.start);
+	printf("%s%lu/%lu packets received in %.3fus %fmpps\n",
+			cmd->rx.count && cmd->rx.stats.count != cmd->rx.count ?
+					"Failed: " : "",
+			cmd->rx.stats.count, cmd->rx.count, t,
+			t ? cmd->rx.stats.count / t : 0);
+	/* clean up */
+	cmd_pg_cleanup(cmd);
+}
+
+cmdline_parse_inst_t cmd_rx = {
+	.f = cmd_rx_parsed,
+	.data = NULL,
+	.help_str = "rx <port> <count> <timeout(s)> <verbose>",
+	.tokens = {
+		(void *)&cmd_rx_cmd,
+		(void *)&cmd_rx_port,
+		(void *)&cmd_rx_count,
+		(void *)&cmd_rx_timeout,
+		(void *)&cmd_rx_verbose,
+		NULL,
+	},
+};
+
+static void
+cmd_rx_short_parsed(
+	void *parsed_result,
+	__attribute__((unused)) struct cmdline *cl,
+	__attribute__((unused)) void *data)
+{
+	struct cmd_pg_txrx_cmd *cmd = parsed_result;
+
+	cmd->rx.count = 0; /* endless */
+	cmd->rx.timeout = 0; /* endless */
+	cmd->rx.verbose = verbose_level;
+	cmd_rx_parsed(cmd, cl, data);
+}
+
+cmdline_parse_inst_t cmd_rx_short = {
+	.f = cmd_rx_short_parsed,
+	.data = NULL,
+	.help_str = "rx <port>",
+	.tokens = {
+		(void *)&cmd_rx_cmd,
+		(void *)&cmd_rx_port,
+		NULL,
+	},
+};
+
+#endif
+
 /* "pktgen loopback" command */
 struct cmd_pktgen_cmd_result {
 	cmdline_fixed_string_t pktgen;
@@ -588,8 +1076,7 @@ cmd_pktgen_cmd_parsed(
 {
 	struct cmd_pktgen_cmd_result *res = parsed_result;
 
-	pktgen_idle_mode = res->mode;
-	printf("PktGen idle mode: %hhu\n", res->mode);
+	pg_idle_set(res->mode);
 }
 
 cmdline_parse_inst_t cmd_pktgen_cmd = {
