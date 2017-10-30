@@ -55,6 +55,7 @@ SRCS-y += iofwd.c
 SRCS-y += macfwd.c
 SRCS-y += macswap.c
 SRCS-y += flowgen.c
+SRCS-y += pktgen.c
 SRCS-y += rxonly.c
 SRCS-y += txonly.c
 SRCS-y += csumonly.c

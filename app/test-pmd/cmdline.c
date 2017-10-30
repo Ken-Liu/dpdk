@@ -15594,6 +15594,8 @@ cmdline_parse_inst_t cmd_py_run = {
 
 /* ******************************************************************************** */
 
+extern cmdline_parse_inst_t cmd_pktgen_cmd;
+
 /* list of instructions */
 cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_help_brief,
@@ -15603,6 +15605,7 @@ cmdline_parse_ctx_t main_ctx[] = {
 #ifdef RTE_LIBRTE_PYTHON
 	(cmdline_parse_inst_t *)&cmd_py_run,
 #endif
+	(cmdline_parse_inst_t *)&cmd_pktgen_cmd,
 	(cmdline_parse_inst_t *)&cmd_showport,
 	(cmdline_parse_inst_t *)&cmd_showqueue,
 	(cmdline_parse_inst_t *)&cmd_showportall,
