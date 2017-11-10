@@ -168,6 +168,9 @@ match_inst(cmdline_parse_inst_t *inst, const char *buf,
 	int n = 0;
 	struct cmdline_token_hdr token_hdr;
 
+	if (resbuf != NULL)
+		memset(resbuf, 0, resbuf_size);
+
 	/* check if we match all tokens of inst */
 	while (!nb_match_token || i < nb_match_token) {
 		token_p = get_token(inst, i);
@@ -251,7 +254,7 @@ cmdline_parse(struct cmdline *cl, const char * buf)
 	union {
 		char buf[CMDLINE_PARSE_RESULT_BUFSIZE];
 		long double align; /* strong alignment constraint for buf */
-	} result, tmp_result;
+	} result, result_ok;
 	void (*f)(void *, struct cmdline *, void *) = NULL;
 	void *data = NULL;
 	int comment = 0;
@@ -312,16 +315,13 @@ cmdline_parse(struct cmdline *cl, const char * buf)
 		debug_printf("INST %d\n", inst_num);
 
 		/* fully parsed */
-		tok = match_inst(inst, buf, 0, tmp_result.buf,
-				 sizeof(tmp_result.buf));
+		tok = match_inst(inst, buf, 0, result.buf, sizeof(result.buf));
 
 		if (tok > 0) /* we matched at least one token */
 			err = CMDLINE_PARSE_BAD_ARGS;
 
 		else if (!tok) {
 			debug_printf("INST fully parsed\n");
-			memcpy(&result, &tmp_result,
-			       sizeof(result));
 			/* skip spaces */
 			while (isblank2(*curbuf)) {
 				curbuf++;
@@ -332,6 +332,7 @@ cmdline_parse(struct cmdline *cl, const char * buf)
 				if (!f) {
 					memcpy(&f, &inst->f, sizeof(f));
 					memcpy(&data, &inst->data, sizeof(data));
+					result_ok = result;
 				}
 				else {
 					/* more than 1 inst matches */
@@ -349,6 +350,7 @@ cmdline_parse(struct cmdline *cl, const char * buf)
 
 	/* call func */
 	if (f) {
+		result = result_ok;
 		f(result.buf, cl, data);
 	}
 
