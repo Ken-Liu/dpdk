@@ -1,0 +1,134 @@
+# sudo build/app/testpmd -l4-8   -m 200 -w 82:0.0,tx_vec_en=0,rx_vec_en=0 -- -i -a --total-num-mbufs=4096 --txq=4 --rxq=4 --nb-cores=4 --forward-mode=pktgen --rss-udp --enable-rx-cksum
+# sudo build/app/testpmd -l4-8   -m 200 -w 82:0.0,tx_vec_en=1,rx_vec_en=1 -- -i -a --total-num-mbufs=4096 --txq=4 --rxq=4 --nb-cores=4 --forward-mode=pktgen --rss-udp --enable-rx-cksum
+
+
+load  test/expect/init.exp
+
+# show loaded CLIs, mute expect summary info
+# set  verbose  0x8040
+
+port config all rss all
+stop
+port stop 0
+port start 0
+start
+expect 0 0 eth/ip/udp 1 1 20 0x0 queue 1
+expect 0 0 eth/ip/udp 1 1 20 0x0 ptype 0x291
+expect 0 0 eth/ip/udp 1 1 20 0x0 ol_flags 0x180
+expect 0 0 eth/ip/udp 1 1 20 0x0 rss 0xf4ff21c5
+expect 0 0 eth/ip1/udp 1 1 20 0x0 rss 0xa1290ec
+expect 0 0 eth/ip2/udp 1 1 20 0x0 rss 0xfe42683
+expect 0 0 eth/ip/udp1 1 1 20 0x0 rss 0x15b5ba8e
+expect 0 0 eth/ip/udp2 1 1 20 0x0 rss 0x6fb4b12a
+
+
+expect 0 0 eth/ip/udpc 1 1 20 0x0 ol_flags 0x80
+expect 0 0 eth/ip/udpc 1 1 20 0x0 ptype 0x291
+expect 0 0 eth/ipc/udp 1 1 20 0x0 ol_flags 0x100
+expect 0 0 eth/ipc/udp 1 1 20 0x0 ptype 0x291
+expect 0 0 eth/ipc/udpc 1 1 20 0x0 ol_flags 0x0
+expect 0 0 eth/ipc/udpc 1 1 20 0x0 ptype 0x291
+expect 0 0 eth/ip/tcp 1 1 20 0x0 ol_flags 0x180
+expect 0 0 eth/ip/tcp 1 1 20 0x0 ptype 0x191
+expect 0 0 eth/ip/tcp 1 1 20 0x0 queue 1
+expect 0 0 eth/ip/tcp 1 1 20 0x0 rss 0xf4ff21c5
+expect 0 0 eth/ip1/tcp 1 1 20 0x0 rss 0xa1290ec
+expect 0 0 eth/ip2/tcp 1 1 20 0x0 rss 0xfe42683
+expect 0 0 eth/ip/tcp1 1 1 20 0x0 rss 0x15b5ba8e
+expect 0 0 eth/ip/tcp2 1 1 20 0x0 rss 0x6fb4b12a
+
+expect 0 0 eth/ip/tcpc 1 1 20 0x0 ol_flags 0x80
+expect 0 0 eth/ip/tcpc 1 1 20 0x0 ptype 0x191
+expect 0 0 eth/ipc/tcp 1 1 20 0x0 ol_flags 0x100
+expect 0 0 eth/ipc/tcp 1 1 20 0x0 ptype 0x191
+expect 0 0 eth/ipc/tcpc 1 1 20 0x0 ol_flags 0x0
+expect 0 0 eth/ipc/tcpc 1 1 20 0x0 ptype 0x191
+expect 0 0 eth/ip 1 1 20 0x0 queue 1
+expect 0 0 eth/ip 1 1 20 0x0 ptype 0x691
+expect 0 0 eth/ip 1 1 20 0x0 ol_flags 0x80
+expect 0 0 eth/ip 1 1 20 0x0 rss 0xe7fd7ed5
+expect 0 0 eth/ip1 1 1 20 0x0 rss 0x1910cffc
+expect 0 0 eth/ip2 1 1 20 0x0 rss 0x1ce67993
+
+expect 0 0 eth/ipc 1 1 20 0x0 ol_flags 0x0
+expect 0 0 eth/ipc 1 1 20 0x0 ptype 0x691
+expect 0 0 eth/fragment(ip/udp/("a"*100),64)[0] 1 1 20 0x0 queue 1
+expect 0 0 eth/fragment(ip/udp/("a"*100),64)[0] 1 1 20 0x0 ptype 0x391
+expect 0 0 eth/fragment(ip/udp/("a"*100),64)[0] 1 1 20 0x0 ol_flags 0x80
+expect 0 0 eth/fragment(ip/udp/("a"*100),64)[0] 1 1 20 0x0 rss 0xe7fd7ed5
+expect 0 0 eth/fragment(ip/udp/("a"*100),64)[1] 1 1 20 0x0 queue 1
+expect 0 0 eth/fragment(ip/udp/("a"*100),64)[1] 1 1 20 0x0 ptype 0x391
+expect 0 0 eth/fragment(ip/udp/("a"*100),64)[1] 1 1 20 0x0 ol_flags 0x80
+expect 0 0 eth/fragment(ip/udp/("a"*100),64)[1] 1 1 20 0x0 rss 0xe7fd7ed5
+expect 0 0 eth/ipv6/udp 1 1 20 0x0 rss 0x1799a1f0
+expect 0 0 eth/ipv6/udp 1 1 20 0x0 ptype 0x2e1
+expect 0 0 eth/ipv6/udp 1 1 20 0x0 ol_flags 0x180
+expect 0 0 eth/ipv6/udp 1 1 20 0x0 rss 0x1799a1f0
+expect 0 0 eth/ipv61/udp 1 1 20 0x0 rss 0x5616a88c
+expect 0 0 eth/ipv62/udp 1 1 20 0x0 rss 0x2256bd9c
+expect 0 0 eth/ipv6/udp1 1 1 20 0x0 rss 0xc1ca0f8
+expect 0 0 eth/ipv6/udp2 1 1 20 0x0 rss 0x1691b8ef
+
+
+expect 0 0 eth/ipv6/udpc 1 1 20 0x0 ol_flags 0x80
+expect 0 0 eth/ipv6/tcp 1 1 20 0x0 ol_flags 0x180
+expect 0 0 eth/ipv6/tcp 1 1 20 0x0 ptype 0x1e1
+expect 0 0 eth/ipv6/tcp 1 1 20 0x0 queue 0
+expect 0 0 eth/ipv6/tcp 1 1 20 0x0 rss 0x1799a1f0
+expect 0 0 eth/ipv61/tcp 1 1 20 0x0 rss 0x5616a88c
+expect 0 0 eth/ipv62/tcp 1 1 20 0x0 rss 0x2256bd9c
+expect 0 0 eth/ipv6/tcp1 1 1 20 0x0 rss 0xc1ca0f8
+expect 0 0 eth/ipv6/tcp2 1 1 20 0x0 rss 0x1691b8ef
+
+expect 0 0 eth/ipv6/tcpc 1 1 20 0x0 ol_flags 0x80
+expect 0 0 eth/ipv6 1 1 20 0x0 queue 3
+expect 0 0 eth/ipv6 1 1 20 0x0 ptype 0x6e1
+expect 0 0 eth/ipv6 1 1 20 0x0 ol_flags 0x80
+expect 0 0 eth/ipv6 1 1 20 0x0 rss 0x99f99ccf
+expect 0 0 eth/ipv61 1 1 20 0x0 rss 0xd87695b3
+expect 0 0 eth/ipv62 1 1 20 0x0 rss 0xac3680a3
+
+expect 0 0 eth/fragment6(ipv6/IPv6ExtHdrFragment()/udp/("a"*120),64)[0] 1 1 20 0x0 queue 3
+expect 0 0 eth/fragment6(ipv6/IPv6ExtHdrFragment()/udp/("a"*120),64)[0] 1 1 20 0x0 ptype 0x3e1
+expect 0 0 eth/fragment6(ipv6/IPv6ExtHdrFragment()/udp/("a"*120),64)[0] 1 1 20 0x0 ol_flags 0x80
+expect 0 0 eth/fragment6(ipv6/IPv6ExtHdrFragment()/udp/("a"*120),64)[0] 1 1 20 0x0 rss 0x99f99ccf
+expect 0 0 eth/fragment6(ipv6/IPv6ExtHdrFragment()/udp/("a"*120),64)[1] 1 1 20 0x0 queue 3
+expect 0 0 eth/fragment6(ipv6/IPv6ExtHdrFragment()/udp/("a"*120),64)[1] 1 1 20 0x0 ptype 0x3e1
+expect 0 0 eth/fragment6(ipv6/IPv6ExtHdrFragment()/udp/("a"*120),64)[1] 1 1 20 0x0 ol_flags 0x80
+expect 0 0 eth/fragment6(ipv6/IPv6ExtHdrFragment()/udp/("a"*120),64)[1] 1 1 20 0x0 rss 0x99f99ccf
+expect 0 0 eth 1 1 20 0x0 rss 0
+expect 0 0 eth 1 1 20 0x0 ptype 0x1
+expect 0 0 eth 1 1 20 0x0 ol_flags 0x0
+
+
+
+
+
+expect 0 0 ethb/ip/udp 1 1 20 0x0 rss 0xf4ff21c5
+expect 0 0 ethm/ip/udp 1 1 20 0x0 rss 0xf4ff21c5
+
+
+
+
+
+
+
+
+
+
+
+
+port config all rss none
+stop
+port stop 0
+port start 0
+start
+expect 0 0 eth/ip/udp 1 1 20 0x0 rss 0
+expect 0 0 eth/ip/udp 1 1 20 0x0 ol_flags 0x180
+expect 0 0 eth/ip/udp 1 1 20 0x0 ptype 0x291
+expect 0 0 eth/ip/tcp 1 1 20 0x0 rss 0
+expect 0 0 eth/ip 1 1 20 0x0 rss 0
+expect 0 0 eth/ipv6/udp 1 1 20 0x0 rss 0
+expect 0 0 eth/ipv6/tcp 1 1 20 0x0 rss 0
+expect 0 0 eth/ipv6 1 1 20 0x0 rss 0
+
