@@ -11,6 +11,7 @@
 #include <termios.h>
 #include <unistd.h>
 #include <inttypes.h>
+#include <fcntl.h>
 #ifndef __linux__
 #ifndef __FreeBSD__
 #include <net/socket.h>
@@ -69,6 +70,9 @@
 #ifdef RTE_LIBRTE_I40E_PMD
 #include <rte_pmd_i40e.h>
 #endif
+#ifdef RTE_LIBRTE_PYTHON
+#include <rte_python.h>
+#endif
 #ifdef RTE_LIBRTE_BNXT_PMD
 #include <rte_pmd_bnxt.h>
 #endif
@@ -77,7 +81,7 @@
 #include "cmdline_tm.h"
 #include "bpf_cmd.h"
 
-static struct cmdline *testpmd_cl;
+struct cmdline *testpmd_cl;
 
 static void cmd_reconfig_device_queue(portid_t id, uint8_t dev, uint8_t queue);
 
@@ -124,6 +128,8 @@ struct cmd_help_long_result {
 	cmdline_fixed_string_t help;
 	cmdline_fixed_string_t section;
 };
+
+extern cmdline_parse_ctx_t main_ctx[];
 
 static void cmd_help_long_parsed(void *parsed_result,
                                  struct cmdline *cl,
@@ -1132,6 +1138,57 @@ cmdline_parse_inst_t cmd_help_long = {
 	},
 };
 
+
+#ifdef RTE_LIBRTE_PYTHON
+/* "py" command */
+struct cmd_py_run_result {
+	cmdline_fixed_string_t py;
+	cmdline_fixed_string_t code;
+};
+
+cmdline_parse_token_string_t cmd_py_run_py =
+	TOKEN_STRING_INITIALIZER(struct cmd_py_run_result, py, "py");
+cmdline_parse_token_string_t cmd_py_run_code =
+	TOKEN_STRING_INITIALIZER(struct cmd_py_run_result, code, "");
+
+static void
+cmd_py_run_parsed(
+	void *parsed_result,
+	__attribute__((unused)) struct cmdline *cl,
+	__attribute__((unused)) void *data)
+{
+	struct cmd_py_run_result *res = parsed_result;
+
+	if (rte_python_init())
+		return;
+	if (!strcmp("shell", res->code)) {
+		cmdline_stdin_exit(testpmd_cl);
+			if (rte_python_shell())
+				printf("Failed to open python shell!\n");
+			testpmd_cl = cmdline_stdin_new(main_ctx, "testpmd> ");
+
+	} else if (!strcmp("debug", res->code)) {
+		rte_python_debug = 1;
+		rte_log_set_level(RTE_LOGTYPE_PYTHON, RTE_LOG_DEBUG);
+	} else if (!strcmp("nodebug", res->code))
+		rte_python_debug = 0;
+	else
+		rte_python_run(res->code);
+}
+
+cmdline_parse_inst_t cmd_py_run = {
+	.f = cmd_py_run_parsed,
+	.data = NULL,
+	.help_str = "run python code like: hex(123)\n"
+			"\t'py shell' to enter shell (ctrl + d to quit)\n"
+			"\t'py debug|nodebug' to toggle debug output, --log-level=9",
+	.tokens = {
+		(void *)&cmd_py_run_py,
+		(void *)&cmd_py_run_code,
+		NULL,
+	},
+};
+#endif
 
 /* *** start/stop/close all ports *** */
 struct cmd_operate_port_result {
@@ -17256,12 +17313,30 @@ cmdline_parse_inst_t cmd_config_per_queue_tx_offload = {
 
 /* ******************************************************************************** */
 
+extern cmdline_parse_inst_t cmd_pktgen_cmd;
+extern cmdline_parse_inst_t cmd_expect_short;
+extern cmdline_parse_inst_t cmd_expect;
+extern cmdline_parse_inst_t cmd_tx;
+extern cmdline_parse_inst_t cmd_tx_short;
+extern cmdline_parse_inst_t cmd_rx;
+extern cmdline_parse_inst_t cmd_rx_short;
+
 /* list of instructions */
 cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_help_brief,
 	(cmdline_parse_inst_t *)&cmd_help_long,
 	(cmdline_parse_inst_t *)&cmd_quit,
 	(cmdline_parse_inst_t *)&cmd_load_from_file,
+#ifdef RTE_LIBRTE_PYTHON
+	(cmdline_parse_inst_t *)&cmd_py_run,
+	(cmdline_parse_inst_t *)&cmd_expect_short,
+	(cmdline_parse_inst_t *)&cmd_expect,
+	(cmdline_parse_inst_t *)&cmd_tx_short,
+	(cmdline_parse_inst_t *)&cmd_tx,
+	(cmdline_parse_inst_t *)&cmd_rx_short,
+	(cmdline_parse_inst_t *)&cmd_rx,
+#endif
+	(cmdline_parse_inst_t *)&cmd_pktgen_cmd,
 	(cmdline_parse_inst_t *)&cmd_showport,
 	(cmdline_parse_inst_t *)&cmd_showqueue,
 	(cmdline_parse_inst_t *)&cmd_showportall,
@@ -17522,9 +17597,19 @@ cmdline_parse_ctx_t main_ctx[] = {
 void
 cmdline_read_from_file(const char *filename)
 {
+	int fd;
 	struct cmdline *cl;
 
-	cl = cmdline_file_new(main_ctx, "testpmd> ", filename);
+	if (!filename)
+		return;
+	fd = open(filename, O_RDONLY, 0);
+	if (fd < 0) {
+		printf("File open() failed\n");
+		return;
+	}
+
+	cl = cmdline_new(main_ctx, "testpmd> ", fd,
+			 verbose_level & 0x8000 ? STDOUT_FILENO : -1);
 	if (cl == NULL) {
 		printf("Failed to create file based cmdline context: %s\n",
 		       filename);

@@ -28,6 +28,7 @@ SRCS-y += iofwd.c
 SRCS-y += macfwd.c
 SRCS-y += macswap.c
 SRCS-y += flowgen.c
+SRCS-y += pktgen.c
 SRCS-y += rxonly.c
 SRCS-y += txonly.c
 SRCS-y += csumonly.c
@@ -38,6 +39,11 @@ SRCS-$(CONFIG_RTE_LIBRTE_BPF) += bpf_cmd.c
 ifeq ($(CONFIG_RTE_LIBRTE_PMD_SOFTNIC)$(CONFIG_RTE_LIBRTE_SCHED),yy)
 SRCS-y += tm.c
 endif
+ifeq ($(CONFIG_RTE_LIBRTE_PYTHON),y)
+LDLIBS += -l$(CONFIG_RTE_LIBRTE_PYTHON_VERSION)
+CFLAGS += -I/usr/include/$(CONFIG_RTE_LIBRTE_PYTHON_VERSION)
+endif
+
 
 ifeq ($(CONFIG_RTE_BUILD_SHARED_LIB),y)
 
