@@ -15778,7 +15778,8 @@ cmdline_read_from_file(const char *filename)
 {
 	struct cmdline *cl;
 
-	cl = cmdline_file_new(main_ctx, "testpmd> ", filename);
+	cl = cmdline_file_new(main_ctx, "testpmd> ", filename,
+			      verbose_level & 0x8000);
 	if (cl == NULL) {
 		printf("Failed to create file based cmdline context: %s\n",
 		       filename);
