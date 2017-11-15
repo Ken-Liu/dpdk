@@ -165,17 +165,17 @@ test_cmdline_socket_fns(void)
 		goto error;
 	if (cmdline_stdin_new(&ctx, NULL) != NULL)
 		goto error;
-	if (cmdline_file_new(NULL, "prompt", "/dev/null") != NULL)
+	if (cmdline_file_new(NULL, "prompt", "/dev/null", 0) != NULL)
 		goto error;
-	if (cmdline_file_new(&ctx, NULL, "/dev/null") != NULL)
+	if (cmdline_file_new(&ctx, NULL, "/dev/null", 0) != NULL)
 		goto error;
-	if (cmdline_file_new(&ctx, "prompt", NULL) != NULL)
+	if (cmdline_file_new(&ctx, "prompt", NULL, 0) != NULL)
 		goto error;
-	if (cmdline_file_new(&ctx, "prompt", "-/invalid/~/path") != NULL) {
+	if (cmdline_file_new(&ctx, "prompt", "-/invalid/~/path", 0) != NULL) {
 		printf("Error: succeeded in opening invalid file for reading!");
 		return -1;
 	}
-	if (cmdline_file_new(&ctx, "prompt", "/dev/null") == NULL) {
+	if (cmdline_file_new(&ctx, "prompt", "/dev/null", 0) == NULL) {
 		printf("Error: failed to open /dev/null for reading!");
 		return -1;
 	}
