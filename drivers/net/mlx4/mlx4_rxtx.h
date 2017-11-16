@@ -184,6 +184,7 @@ int mlx4_tx_queue_setup(struct rte_eth_dev *dev, uint16_t idx,
 			uint16_t desc, unsigned int socket,
 			const struct rte_eth_txconf *conf);
 void mlx4_tx_queue_release(void *dpdk_txq);
+uint64_t mlx4_priv_get_tx_port_offloads(struct priv *priv);
 
 /**
  * Get memory region (MR) <-> memory pool (MP) association from txq->mp2mr[].
