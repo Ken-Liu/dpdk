@@ -166,6 +166,8 @@ int mlx4_rx_queue_setup(struct rte_eth_dev *dev, uint16_t idx,
 			const struct rte_eth_rxconf *conf,
 			struct rte_mempool *mp);
 void mlx4_rx_queue_release(void *dpdk_rxq);
+uint64_t mlx4_priv_get_rx_port_offloads(struct priv *priv);
+uint64_t mlx4_priv_get_rx_queue_offloads(struct priv *priv);
 
 /* mlx4_rxtx.c */
 
