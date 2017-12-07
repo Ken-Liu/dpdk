@@ -99,7 +99,7 @@ usage(char* progname)
 	       "--rss-ip | --rss-udp | "
 	       "--rxpt= | --rxht= | --rxwt= | --rxfreet= | "
 	       "--txpt= | --txht= | --txwt= | --txfreet= | "
-	       "--txrst= | --txqflags= ]\n",
+	       "--txrst= | --txqflags= | --tx-offloads ]\n",
 	       progname);
 #ifdef RTE_LIBRTE_CMDLINE
 	printf("  --interactive: run in interactive mode.\n");
@@ -216,6 +216,7 @@ usage(char* progname)
 	       "disable print of designated event or all of them.\n");
 	printf("  --flow-isolate-all: "
 	       "requests flow API isolated mode on all ports at initialization time.\n");
+	printf("  --tx-offloads=0xXXXXXXXX: hexadecimal bitmask of TX queue offloads\n");
 }
 
 #ifdef RTE_LIBRTE_CMDLINE
@@ -566,8 +567,9 @@ launch_args_parse(int argc, char** argv)
 	char **argvopt;
 	int opt_idx;
 	enum { TX, RX };
-	/* Default Rx offloads for all ports. */
+	/* Default offloads for all ports. */
 	uint64_t rx_offloads = rx_mode.offloads;
+	uint64_t tx_offloads = tx_mode.offloads;
 
 	static struct option lgopts[] = {
 		{ "help",			0, 0, 0 },
@@ -645,6 +647,7 @@ launch_args_parse(int argc, char** argv)
 		{ "no-rmv-interrupt",		0, 0, 0 },
 		{ "print-event",		1, 0, 0 },
 		{ "mask-event",			1, 0, 0 },
+		{ "tx-offloads",		1, 0, 0 },
 		{ 0, 0, 0, 0 },
 	};
 
@@ -1116,6 +1119,15 @@ launch_args_parse(int argc, char** argv)
 				rmv_interrupt = 0;
 			if (!strcmp(lgopts[opt_idx].name, "flow-isolate-all"))
 				flow_isolate_all = 1;
+			if (!strcmp(lgopts[opt_idx].name, "tx-offloads")) {
+				char *end = NULL;
+				n = strtoull(optarg, &end, 16);
+				if (n >= 0)
+					tx_offloads = (uint64_t)n;
+				else
+					rte_exit(EXIT_FAILURE,
+						 "tx-offloads must be >= 0\n");
+			}
 			if (!strcmp(lgopts[opt_idx].name, "print-event"))
 				if (parse_event_printing_config(optarg, 1)) {
 					rte_exit(EXIT_FAILURE,
@@ -1142,4 +1154,5 @@ launch_args_parse(int argc, char** argv)
 
 	/* Set offload configuration from command line parameters. */
 	rx_mode.offloads = rx_offloads;
+	tx_mode.offloads = tx_offloads;
 }
