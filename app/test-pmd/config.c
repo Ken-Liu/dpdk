@@ -2808,7 +2808,6 @@ tx_vlan_set(portid_t port_id, uint16_t vlan_id)
 	}
 
 	tx_vlan_reset(port_id);
-	ports[port_id].tx_ol_flags |= TESTPMD_TX_OFFLOAD_INSERT_VLAN;
 	ports[port_id].dev_conf.txmode.offloads |= DEV_TX_OFFLOAD_VLAN_INSERT;
 	ports[port_id].tx_vlan_id = vlan_id;
 }
@@ -2832,7 +2831,6 @@ tx_qinq_set(portid_t port_id, uint16_t vlan_id, uint16_t vlan_id_outer)
 	}
 
 	tx_vlan_reset(port_id);
-	ports[port_id].tx_ol_flags |= TESTPMD_TX_OFFLOAD_INSERT_QINQ;
 	ports[port_id].dev_conf.txmode.offloads |= DEV_TX_OFFLOAD_QINQ_INSERT;
 	ports[port_id].tx_vlan_id = vlan_id;
 	ports[port_id].tx_vlan_id_outer = vlan_id_outer;
@@ -2843,8 +2841,6 @@ tx_vlan_reset(portid_t port_id)
 {
 	if (port_id_is_invalid(port_id, ENABLED_WARN))
 		return;
-	ports[port_id].tx_ol_flags &= ~(TESTPMD_TX_OFFLOAD_INSERT_VLAN |
-				TESTPMD_TX_OFFLOAD_INSERT_QINQ);
 	ports[port_id].dev_conf.txmode.offloads &=
 				~(DEV_TX_OFFLOAD_VLAN_INSERT |
 				  DEV_TX_OFFLOAD_QINQ_INSERT);
