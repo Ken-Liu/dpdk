@@ -616,8 +616,8 @@ port_offload_cap_display(portid_t port_id)
 
 	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_VLAN_INSERT) {
 		printf("VLAN insert:                   ");
-		if (ports[port_id].tx_ol_flags &
-		    TESTPMD_TX_OFFLOAD_INSERT_VLAN)
+		if (ports[port_id].dev_conf.txmode.offloads &
+		    DEV_TX_OFFLOAD_VLAN_INSERT)
 			printf("on\n");
 		else
 			printf("off\n");
@@ -634,8 +634,8 @@ port_offload_cap_display(portid_t port_id)
 
 	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_QINQ_INSERT) {
 		printf("Double VLANs insert:           ");
-		if (ports[port_id].tx_ol_flags &
-		    TESTPMD_TX_OFFLOAD_INSERT_QINQ)
+		if (ports[port_id].dev_conf.txmode.offloads &
+		    DEV_TX_OFFLOAD_QINQ_INSERT)
 			printf("on\n");
 		else
 			printf("off\n");
@@ -643,7 +643,8 @@ port_offload_cap_display(portid_t port_id)
 
 	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_IPV4_CKSUM) {
 		printf("TX IPv4 checksum:              ");
-		if (ports[port_id].tx_ol_flags & TESTPMD_TX_OFFLOAD_IP_CKSUM)
+		if (ports[port_id].dev_conf.txmode.offloads &
+		    DEV_TX_OFFLOAD_IPV4_CKSUM)
 			printf("on\n");
 		else
 			printf("off\n");
@@ -651,7 +652,8 @@ port_offload_cap_display(portid_t port_id)
 
 	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_UDP_CKSUM) {
 		printf("TX UDP checksum:               ");
-		if (ports[port_id].tx_ol_flags & TESTPMD_TX_OFFLOAD_UDP_CKSUM)
+		if (ports[port_id].dev_conf.txmode.offloads &
+		    DEV_TX_OFFLOAD_UDP_CKSUM)
 			printf("on\n");
 		else
 			printf("off\n");
@@ -659,7 +661,8 @@ port_offload_cap_display(portid_t port_id)
 
 	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_TCP_CKSUM) {
 		printf("TX TCP checksum:               ");
-		if (ports[port_id].tx_ol_flags & TESTPMD_TX_OFFLOAD_TCP_CKSUM)
+		if (ports[port_id].dev_conf.txmode.offloads &
+		    DEV_TX_OFFLOAD_TCP_CKSUM)
 			printf("on\n");
 		else
 			printf("off\n");
@@ -667,7 +670,8 @@ port_offload_cap_display(portid_t port_id)
 
 	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_SCTP_CKSUM) {
 		printf("TX SCTP checksum:              ");
-		if (ports[port_id].tx_ol_flags & TESTPMD_TX_OFFLOAD_SCTP_CKSUM)
+		if (ports[port_id].dev_conf.txmode.offloads &
+		    DEV_TX_OFFLOAD_SCTP_CKSUM)
 			printf("on\n");
 		else
 			printf("off\n");
@@ -675,8 +679,8 @@ port_offload_cap_display(portid_t port_id)
 
 	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_OUTER_IPV4_CKSUM) {
 		printf("TX Outer IPv4 checksum:        ");
-		if (ports[port_id].tx_ol_flags &
-		    TESTPMD_TX_OFFLOAD_OUTER_IP_CKSUM)
+		if (ports[port_id].dev_conf.txmode.offloads &
+		    DEV_TX_OFFLOAD_OUTER_IPV4_CKSUM)
 			printf("on\n");
 		else
 			printf("off\n");
@@ -684,7 +688,8 @@ port_offload_cap_display(portid_t port_id)
 
 	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_TCP_TSO) {
 		printf("TX TCP segmentation:           ");
-		if (ports[port_id].tso_segsz != 0)
+		if (ports[port_id].dev_conf.txmode.offloads &
+		    DEV_TX_OFFLOAD_TCP_TSO)
 			printf("on\n");
 		else
 			printf("off\n");
@@ -692,7 +697,8 @@ port_offload_cap_display(portid_t port_id)
 
 	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_UDP_TSO) {
 		printf("TX UDP segmentation:           ");
-		if (ports[port_id].tso_segsz != 0)
+		if (ports[port_id].dev_conf.txmode.offloads &
+		    DEV_TX_OFFLOAD_UDP_TSO)
 			printf("on\n");
 		else
 			printf("off\n");
@@ -700,7 +706,8 @@ port_offload_cap_display(portid_t port_id)
 
 	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_VXLAN_TNL_TSO) {
 		printf("TSO for VXLAN tunnel packet:   ");
-		if (ports[port_id].tunnel_tso_segsz)
+		if (ports[port_id].dev_conf.txmode.offloads &
+		    DEV_TX_OFFLOAD_VXLAN_TNL_TSO)
 			printf("on\n");
 		else
 			printf("off\n");
@@ -708,7 +715,8 @@ port_offload_cap_display(portid_t port_id)
 
 	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_GRE_TNL_TSO) {
 		printf("TSO for GRE tunnel packet:     ");
-		if (ports[port_id].tunnel_tso_segsz)
+		if (ports[port_id].dev_conf.txmode.offloads &
+		    DEV_TX_OFFLOAD_GRE_TNL_TSO)
 			printf("on\n");
 		else
 			printf("off\n");
@@ -716,7 +724,8 @@ port_offload_cap_display(portid_t port_id)
 
 	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_IPIP_TNL_TSO) {
 		printf("TSO for IPIP tunnel packet:    ");
-		if (ports[port_id].tunnel_tso_segsz)
+		if (ports[port_id].dev_conf.txmode.offloads &
+		    DEV_TX_OFFLOAD_IPIP_TNL_TSO)
 			printf("on\n");
 		else
 			printf("off\n");
@@ -724,7 +733,8 @@ port_offload_cap_display(portid_t port_id)
 
 	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_GENEVE_TNL_TSO) {
 		printf("TSO for GENEVE tunnel packet:  ");
-		if (ports[port_id].tunnel_tso_segsz)
+		if (ports[port_id].dev_conf.txmode.offloads &
+		    DEV_TX_OFFLOAD_GENEVE_TNL_TSO)
 			printf("on\n");
 		else
 			printf("off\n");
@@ -1704,8 +1714,10 @@ rxtx_config_display(void)
 				tx_conf->tx_thresh.pthresh,
 				tx_conf->tx_thresh.hthresh,
 				tx_conf->tx_thresh.wthresh);
-		printf("  TX RS bit threshold=%d - TXQ flags=0x%"PRIx32"\n",
-				tx_conf->tx_rs_thresh, tx_conf->txq_flags);
+		printf("  TX RS bit threshold=%d - TXQ flags=0x%"PRIx32""
+		       " - TXQ offloads=0x%"PRIx64"\n",
+				tx_conf->tx_rs_thresh, tx_conf->txq_flags,
+				tx_conf->offloads);
 	}
 }
 
@@ -2783,6 +2795,7 @@ void
 tx_vlan_set(portid_t port_id, uint16_t vlan_id)
 {
 	int vlan_offload;
+
 	if (port_id_is_invalid(port_id, ENABLED_WARN))
 		return;
 	if (vlan_id_is_invalid(vlan_id))
@@ -2796,6 +2809,7 @@ tx_vlan_set(portid_t port_id, uint16_t vlan_id)
 
 	tx_vlan_reset(port_id);
 	ports[port_id].tx_ol_flags |= TESTPMD_TX_OFFLOAD_INSERT_VLAN;
+	ports[port_id].dev_conf.txmode.offloads |= DEV_TX_OFFLOAD_VLAN_INSERT;
 	ports[port_id].tx_vlan_id = vlan_id;
 }
 
@@ -2803,6 +2817,7 @@ void
 tx_qinq_set(portid_t port_id, uint16_t vlan_id, uint16_t vlan_id_outer)
 {
 	int vlan_offload;
+
 	if (port_id_is_invalid(port_id, ENABLED_WARN))
 		return;
 	if (vlan_id_is_invalid(vlan_id))
@@ -2818,6 +2833,7 @@ tx_qinq_set(portid_t port_id, uint16_t vlan_id, uint16_t vlan_id_outer)
 
 	tx_vlan_reset(port_id);
 	ports[port_id].tx_ol_flags |= TESTPMD_TX_OFFLOAD_INSERT_QINQ;
+	ports[port_id].dev_conf.txmode.offloads |= DEV_TX_OFFLOAD_QINQ_INSERT;
 	ports[port_id].tx_vlan_id = vlan_id;
 	ports[port_id].tx_vlan_id_outer = vlan_id_outer;
 }
@@ -2829,6 +2845,9 @@ tx_vlan_reset(portid_t port_id)
 		return;
 	ports[port_id].tx_ol_flags &= ~(TESTPMD_TX_OFFLOAD_INSERT_VLAN |
 				TESTPMD_TX_OFFLOAD_INSERT_QINQ);
+	ports[port_id].dev_conf.txmode.offloads &=
+				~(DEV_TX_OFFLOAD_VLAN_INSERT |
+				  DEV_TX_OFFLOAD_QINQ_INSERT);
 	ports[port_id].tx_vlan_id = 0;
 	ports[port_id].tx_vlan_id_outer = 0;
 }
