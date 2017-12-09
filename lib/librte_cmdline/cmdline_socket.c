@@ -73,7 +73,8 @@
 #include "cmdline.h"
 
 struct cmdline *
-cmdline_file_new(cmdline_parse_ctx_t *ctx, const char *prompt, const char *path)
+cmdline_file_new(cmdline_parse_ctx_t *ctx, const char *prompt, const char *path,
+		 int echo)
 {
 	int fd;
 
@@ -86,7 +87,7 @@ cmdline_file_new(cmdline_parse_ctx_t *ctx, const char *prompt, const char *path)
 		dprintf("open() failed\n");
 		return NULL;
 	}
-	return cmdline_new(ctx, prompt, fd, -1);
+	return cmdline_new(ctx, prompt, fd, echo ? 1 : -1);
 }
 
 struct cmdline *

@@ -68,7 +68,8 @@
 extern "C" {
 #endif
 
-struct cmdline *cmdline_file_new(cmdline_parse_ctx_t *ctx, const char *prompt, const char *path);
+struct cmdline *cmdline_file_new(cmdline_parse_ctx_t *ctx, const char *prompt,
+				 const char *path, int echo);
 struct cmdline *cmdline_stdin_new(cmdline_parse_ctx_t *ctx, const char *prompt);
 void cmdline_stdin_exit(struct cmdline *cl);
 
