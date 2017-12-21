@@ -328,18 +328,22 @@ pg_tx_fill(struct rte_mbuf **pkts_burst, uint64_t nb_to_tx,
 	exp = pg_task_template_get(task, task->stats.count);
 	RTE_ASSERT(exp && exp->pool);
 	RTE_ASSERT(task->cnt_mbufs > 0);
-	if (rte_pktmbuf_alloc_bulk(exp->pool,
-			pkts_burst, nb_to_tx))
+	if (rte_pktmbuf_alloc_bulk(exp->pool, pkts_burst, nb_to_tx))
 		return -1;
 	for (i = 0; i < nb_to_tx; i++) {
 		exp = pg_task_template_get(task, task->stats.count + i);
+#ifdef MUBF_COPY
+		(void)fs;
+		rte_pktmbuf_attach(pkts_burst[i], exp);
+#else
 		rte_memcpy(rte_pktmbuf_mtod(pkts_burst[i], void *),
 				rte_pktmbuf_mtod(exp, void *),
-				exp->data_len);
+				RTE_ALIGN(exp->data_len, RTE_CACHE_LINE_SIZE));
 		pkts_burst[i]->pkt_len = exp->pkt_len;
 		pkts_burst[i]->data_len = exp->data_len;
 		pkts_burst[i]->ol_flags = exp->ol_flags;
 		pg_debug(pkts_burst[i], task->verbose, fs, 0);
+#endif
 	}
 	return 0;
 }
@@ -350,7 +354,7 @@ pg_start(struct pktgen_task *task, uint64_t start_tsc)
 	/* even round end, has to check tx stats */
 	if (unlikely(task->stats.active == PKTGEN_TASK_END))
 		return -1;
-	if (!task->stats.start)
+	if (unlikely(!task->stats.start))
 		task->stats.start = start_tsc;
 	return 0;
 }
@@ -369,7 +373,6 @@ static inline void
 pg_end(struct pktgen_task *task)
 {
 	task->stats.active = PKTGEN_TASK_END;
-	task->stats.end = rte_rdtsc();
 }
 
 /* return -1 if nothing to do */
@@ -398,11 +401,44 @@ pg_tx(struct fwd_stream* fs, struct pktgen_task *task,
 		fs->tx_packets += nb_tx;
 		task->stats.count += nb_tx;
 	}
-	if (task->stats.count == task->count) {
+	if (unlikely(task->stats.count == task->count)) {
 		if (pg_round_end(task)) /* end of taks? */
 			pg_end(task);
 	}
 	return 0;
+}
+
+static inline void
+mbuf_free_bulk(struct rte_mbuf *pkts[], uint16_t nb)
+{
+	struct rte_mbuf *to_free[32];
+	struct rte_mbuf *m;
+	struct rte_mbuf *m_next;
+	uint16_t i, n = 0;
+
+	for (i = 0; i < nb; i++) {
+		__rte_mbuf_sanity_check(pkts[i], 1);
+		m = pkts[i];
+		while (m != NULL) {
+			m_next = m->next;
+			m = rte_pktmbuf_prefree_seg(m);
+			if (likely(m != NULL)) {
+				RTE_ASSERT(RTE_MBUF_DIRECT(m));
+				RTE_ASSERT(rte_mbuf_refcnt_read(m) == 1);
+				RTE_ASSERT(m->next == NULL);
+				RTE_ASSERT(m->nb_segs == 1);
+				__rte_mbuf_sanity_check(m, 0);
+				to_free[n++] = m;
+				if (unlikely(n == 32)) {
+					rte_mempool_put_bulk(m->pool, (void *)to_free, n);
+					n = 0;
+				}
+			}
+			m = m_next;
+		}
+	}
+	if (n)
+		rte_mempool_put_bulk(to_free[0]->pool, (void *)to_free, n);
 }
 
 /* return -1 if nothing to do */
@@ -417,15 +453,15 @@ pg_rx(struct fwd_stream* fs, struct pktgen_task *task, uint64_t start_tsc)
 	struct pktgen_task *tx_task;
 	int r;
 
-	if (pg_start(task, start_tsc))
+	if (unlikely(pg_start(task, start_tsc)))
 		return -1;
-	if (task->count) {
+	if (unlikely(task->count)) {
 		nb_to_rx = task->count - task->stats.count;
 		if (nb_to_rx > nb_pkt_per_burst)
 			nb_to_rx = nb_pkt_per_burst;
 	} else /* endless rx */
 		nb_to_rx = nb_pkt_per_burst;
-	if (nb_to_rx && task->stats.active == PKTGEN_TASK_START) {
+	if (likely(nb_to_rx && task->stats.active == PKTGEN_TASK_START)) {
 		nb_rx = rte_eth_rx_burst(fs->rx_port, fs->rx_queue,
 				pkts_burst, nb_pkt_per_burst);
 #ifdef RTE_TEST_PMD_RECORD_BURST_STATS
@@ -433,9 +469,9 @@ pg_rx(struct fwd_stream* fs, struct pktgen_task *task, uint64_t start_tsc)
 #endif
 		if (unlikely(nb_rx == 0))
 			return 0;
+		verbose = task->verbose;
 		for (i = 0; i < nb_rx; i++) {
-			verbose = task->verbose;
-			if (task->data) {
+			if (unlikely(task->txrx && task->data)) {
 				r = pg_mbuf_expect(fs, task, pkts_burst[i], task->stats.count + i);
 				if (r < 0) /* task timeout */
 					return r;
@@ -443,12 +479,13 @@ pg_rx(struct fwd_stream* fs, struct pktgen_task *task, uint64_t start_tsc)
 					verbose |= 0x10;
 			}
 			pg_debug(pkts_burst[i], verbose, fs, 1);
-			rte_pktmbuf_free(pkts_burst[i]);
 		}
+		mbuf_free_bulk(pkts_burst, nb_rx);
+		task->stats.end = start_tsc;
 		fs->rx_packets += nb_rx;
 		task->stats.count += nb_rx;
 	}
-	if (task->count && task->stats.count >= task->count) {
+	if (unlikely(task->count && task->stats.count >= task->count)) {
 		tx_task = task->data;
 		if (task->stats.active == PKTGEN_TASK_START && pg_round_end(task))
 			pg_end(task);
@@ -615,18 +652,22 @@ cmd_pg_port_poll(portid_t port, struct pktgen_task_stats *sum, int tx)
 	}
 }
 
-static int
-cmd_pg_scapy_to_mbuf(char *scapy, portid_t port, struct pktgen_task *task)
+static struct rte_mbuf **
+cmd_pg_scapy_to_mbuf(char *scapy, portid_t port, uint16_t *count)
 {
 	int socket;
 	struct rte_mempool *pool;
 
-	socket = port_numa[port];
-	if (socket == NUMA_NO_CONFIG)
-		socket = ports[port].socket_id;
+	if (numa_support) {
+		socket = port_numa[port];
+		if (socket == NUMA_NO_CONFIG)
+			socket = ports[port].socket_id;
+	} else
+		socket = socket_num;
+	if (socket_num == UMA_NO_CONFIG)
+		socket = 0;
 	pool = mbuf_pool_find(socket);
-	task->data = rte_python_scapy_to_mbufs(pool, scapy, &task->cnt_mbufs);
-	return !task->data;
+	return rte_python_scapy_to_mbufs(pool, scapy, count);
 }
 
 static inline int
@@ -662,15 +703,16 @@ cmd_pg_cleanup(struct cmd_pg_txrx_cmd *cmd)
 	uint16_t m;
 
 	RTE_ASSERT(pktgen_tx_tasks && pktgen_rx_tasks);
+	rte_delay_ms(100); /* wait active tasks */
 	/* free all tx queue mbufs */
-	for (q = 0; cmd->tx.count && q < nb_txq; q++) {
+	for (q = 0; q < nb_txq; q++) {
 		task = task_tx(cmd->tx.port, q);
-		if (!task->data)
+		if (!task->data || !task->cnt_mbufs)
 			continue;
 		m = task->cnt_mbufs;
 		while(m)
 			rte_pktmbuf_free(pg_task_template_get(task, --m));
-		task->data = NULL;
+		rte_free(task->data);
 	}
 }
 
@@ -701,20 +743,53 @@ static int
 cmd_pg_tx(struct cmd_pktgen_cmd* cmd, int txrx)
 {
 	struct pktgen_task *task;
+	uint16_t n_pkts = 0;
+	uint16_t i;
+	uint64_t count = 0;
+	queueid_t q;
+	struct rte_mbuf** mbufs;
+	struct rte_mbuf** qbufs;
 
 	RTE_ASSERT(cmd);
-	task = task_tx(cmd->port, 0);
-	if (cmd_pg_scapy_to_mbuf(cmd->pattern, cmd->port, task))
+	mbufs = cmd_pg_scapy_to_mbuf(cmd->pattern, cmd->port, &n_pkts);
+	if (!mbufs) {
+		printf("Wrong syntax or out of memory\n");
 		return -1;
-	/* send out using queue 0 */
-	memset(&cmd->stats, 0, sizeof(cmd->stats));
-	if (cmd->count == UINT64_MAX)
-		cmd->count = task->cnt_mbufs;
-	task->count = cmd->count;
-	task->round = cmd->round;
-	task->verbose = cmd->verbose & 0xff;
-	task->txrx = txrx;
-	task->stats.active = PKTGEN_TASK_START;
+	}
+	if (cmd->count == UINT64_MAX) /* auto detection */
+		cmd->count = n_pkts;
+	if (txrx && (!cmd->count || cmd->count > n_pkts))
+		txrx = 0; /* don't compare result */
+	for (q = 0; q < nb_txq; q++) {
+		if (cmd->count) {
+			count = cmd->count / nb_txq +
+				((cmd->count % nb_txq) > q ? 1 : 0);
+			if (!count)
+				break;
+		}
+		task = task_tx(cmd->port, q);
+		memset(&cmd->stats, 0, sizeof(cmd->stats));
+		if (q == 0)
+			task->data = mbufs;
+		else {
+			qbufs = rte_malloc(NULL, sizeof(void *) * n_pkts, 0);
+			if (!qbufs) {
+				printf("Out of memory?\n");
+				return -1;
+			}
+			for (i = 0; i < n_pkts; i++) {
+				rte_pktmbuf_refcnt_update(mbufs[i], 1);
+				qbufs[i] = mbufs[i];
+			}
+			task->data = qbufs;
+		}
+		task->cnt_mbufs = n_pkts;
+		task->count = count;
+		task->round = cmd->round;
+		task->verbose = cmd->verbose & 0xff;
+		task->txrx = txrx;
+		task->stats.active = PKTGEN_TASK_START;
+	}
 	return 0;
 }
 
@@ -724,6 +799,7 @@ cmd_pg_wait(struct cmdline *cl, struct cmd_pktgen_cmd* cmd,
 {
 	char c = 0;
 	int flags;
+	uint64_t start = rte_rdtsc();
 
 	flags = fcntl(cl->s_in, F_GETFL, 0);
 	RTE_ASSERT(flags >= 0);
@@ -735,8 +811,9 @@ cmd_pg_wait(struct cmdline *cl, struct cmd_pktgen_cmd* cmd,
 			break;
 		if (timeout && rte_rdtsc() > timeout)
 			break;
-		/* detect ctrl+c or ctrl+d */
-		if (!timeout && read(cl->s_in, &c, 1) && (c == 3 || c == 4))
+		/* detect ctrl+c or ctrl+d if cmd longer than 3 sec */
+		if (TSC_US(rte_rdtsc() - start) > 1e6 /* (!timeout && !cmd->count) */
+		    && read(cl->s_in, &c, 1) && (c == 3 || c == 4))
 			break;
 		rte_delay_ms(1);
 	}
@@ -789,8 +866,6 @@ cmd_expect_parsed(
 	cmd->tx.verbose = cmd->tx.verbose >> 8;
 	cmd->rx.round = cmd->tx.round;
 	cmd->rx.count = cmd->tx.count;
-	if (cmd->tx.count == 0)
-		cmd->tx.count = UINT64_MAX;
 	/* prepare task */
 	if (cmd_pg_tx(&cmd->tx, 1))
 		return;

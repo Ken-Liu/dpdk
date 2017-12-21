@@ -179,6 +179,12 @@ Supported field check:
   testpmd> expect 0 0 Ether() 1 10000 1000 0 0 0
   tx: 10000/10000 50401.309us 0.198408mpps        rx: 10000/10000 50406.070us 0.198389mpps        round: 10000/10000 5.041us      total: 50406.070us 0.198389mpps
 
+.. code:: bash
+
+  # tx and rx for 100ms - performance test
+  testpmd>  expect 0 1 Ether()/IP()/UDP(sport=(1,255))/("a"*978) 0 1 100 0 0 0
+  Failed tx: 114048/0 10003.931us 11.400319mpps   rx: 108894/0 9985.172us 10.905571mpps   round: 1/1 10003.931us  total: 10003.931us 10.885121mpps
+
 <timeout>:
 
 - 0: endless loop, could be canceled by Ctrl+C
@@ -287,7 +293,6 @@ Known issues/TODO:
 - TX offload
 - Jumbo packet send
 - LRO rx
-- Multi-queue for max throughput
 - Dynamic packet template - slow but flexible
 - Test suit with summary
 - mbuf packet type in scapy?
