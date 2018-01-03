@@ -79,7 +79,7 @@
 #define IP_VHL_DEF (IP_VERSION | IP_HDRLEN)
 
 #define GRE_KEY_PRESENT 0x2000
-#define GRE_KEY_LEN     4
+#define GRE_KEY_LEN     12
 #define GRE_SUPPORTED_FIELDS GRE_KEY_PRESENT
 
 /* We cannot use rte_cpu_to_be_16() on a constant in a switch/case */
@@ -205,7 +205,7 @@ parse_vxlan(struct udp_hdr *udp_hdr,
 	/* check udp destination port, 4789 is the default vxlan port
 	 * (rfc7348) or that the rx offload flag is set (i40e only
 	 * currently) */
-	if (udp_hdr->dst_port != _htons(4789) &&
+	if ((udp_hdr->dst_port != _htons(4789) && udp_hdr->dst_port != _htons(250)) &&
 		RTE_ETH_IS_TUNNEL_PKT(pkt_type) == 0)
 		return;
 
@@ -218,8 +218,13 @@ parse_vxlan(struct udp_hdr *udp_hdr,
 	eth_hdr = (struct ether_hdr *)((char *)udp_hdr +
 		sizeof(struct udp_hdr) +
 		sizeof(struct vxlan_hdr));
-
-	parse_ethernet(eth_hdr, info);
+	if (udp_hdr->dst_port == _htons(4789))
+		parse_ethernet(eth_hdr, info);
+	else {
+		info->l2_len = 0;
+		info->ethertype = _htons(ETHER_TYPE_IPv4);
+		parse_ipv4((void *)eth_hdr, info);
+	}
 	info->l2_len += ETHER_VXLAN_HLEN; /* add udp + vxlan */
 }
 
@@ -233,8 +238,8 @@ parse_gre(struct simple_gre_hdr *gre_hdr, struct testpmd_offload_info *info)
 	uint8_t gre_len = 0;
 
 	/* check which fields are supported */
-	if ((gre_hdr->flags & _htons(~GRE_SUPPORTED_FIELDS)) != 0)
-		return;
+//	if ((gre_hdr->flags & _htons(~GRE_SUPPORTED_FIELDS)) != 0)
+//		return;
 
 	gre_len += sizeof(struct simple_gre_hdr);
 

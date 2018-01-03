@@ -729,6 +729,7 @@ txq_set_params(struct mlx5_txq_ctrl *txq_ctrl)
 		txq_ctrl->txq.tso_en = 1;
 	}
 	txq_ctrl->txq.tunnel_en = config->tunnel_en;
+	txq_ctrl->txq.swp_en = 1;
 }
 
 /**

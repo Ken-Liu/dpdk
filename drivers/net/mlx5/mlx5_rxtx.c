@@ -247,6 +247,80 @@ mlx5_copy_to_wq(void *dst, const void *src, size_t n,
 }
 
 /**
+ * Inline TSO headers into WQE and set checksums fields.
+ *
+ * @param txq
+ *   Pointer to TX queue structure.
+ * @param buf
+ *   Pointer to packet mbuf structure.
+ * @param raw
+ *   Double pointer to WQE current write offset.
+ * @param cs_flags
+ *   Pointer to checksums flags.
+ * @swp_offsets
+ *   Pointer to header offsets when using software parser.
+ * @swp_types
+ *   Pointer to header types when using software parser.
+ * @param max_wqe
+ *   Pointer to the available number of wqes.
+ *
+ * @return
+ *   Headers size which were copied into wqe upon success,
+ *   negative errno value otherwise, the following erros
+ *   are defined:
+ *
+ *   -EINVAL: invalid arugments for TSO. packet headers are too large
+ *   or not enough WQEs. cannot execute the TSO.
+ *
+ *   -ENOMEM: reached the end of WQ ring. the TSO WQE can be executed
+ *   only after the WQ ring wraparound.
+ */
+static int
+process_tso(struct mlx5_txq_data *txq, struct rte_mbuf *buf, uint8_t **raw,
+	    uint16_t *max_wqe)
+{
+	uintptr_t addr = rte_pktmbuf_mtod(buf, uintptr_t);
+	volatile struct mlx5_wqe *wqe = (volatile struct mlx5_wqe *)
+					 tx_mlx5_wqe(txq, txq->wqe_ci);
+	uint8_t *curr = *raw;
+	const uint8_t tunneled = txq->tunnel_en &&
+			       (buf->ol_flags & PKT_TX_TUNNEL_MASK);
+	uint16_t pkt_inline_sz = (uintptr_t)curr - (uintptr_t)wqe -
+				 (MLX5_WQE_DWORD_SIZE * 2 - 2);
+	uint8_t vlan_sz = (buf->ol_flags & PKT_TX_VLAN_PKT) ? 4 : 0;
+	uintptr_t end = (uintptr_t)(((uintptr_t)txq->wqes) +
+				    (1 << txq->wqe_n) * MLX5_WQE_SIZE);
+	unsigned int copy_b;
+	uint16_t tso_header_sz;
+
+	if (vlan_sz)
+		addr += 2 * ETHER_ADDR_LEN + 2;
+	else
+		addr += pkt_inline_sz;
+	tso_header_sz = buf->l2_len + vlan_sz +	buf->l3_len + buf->l4_len;
+	if (tunneled)
+		tso_header_sz += buf->outer_l2_len + buf->outer_l3_len;
+	if (unlikely(tso_header_sz > MLX5_MAX_TSO_HEADER)) {
+		txq->stats.oerrors++;
+		return -EINVAL;
+	}
+	copy_b = tso_header_sz - pkt_inline_sz;
+	if (copy_b && ((end - (uintptr_t)curr) > copy_b)) {
+		uint16_t n = (MLX5_WQE_DS(copy_b) - 1 + 3) / 4;
+
+		if (unlikely(*max_wqe < n))
+			return -EINVAL;
+		*max_wqe -= n;
+		rte_memcpy((void *)curr, (void *)addr, copy_b);
+		/* Another DWORD will be added in the inline part. */
+		*raw = curr + MLX5_WQE_DS(copy_b) * MLX5_WQE_DWORD_SIZE;
+	} else {
+		return -ENOMEM;
+	}
+	return copy_b;
+}
+
+/**
  * DPDK callback to check the status of a tx descriptor.
  *
  * @param tx_queue
@@ -376,6 +450,8 @@ mlx5_tx_burst(void *dpdk_txq, struct rte_mbuf **pkts, uint16_t pkts_n)
 		uint16_t ehdr;
 		uint8_t cs_flags;
 		uint64_t tso = 0;
+		uint32_t swp_offsets = 0;
+		uint8_t swp_types = 0;
 		uint16_t tso_segsz = 0;
 #ifdef MLX5_PMD_SOFT_COUNTERS
 		uint32_t total_length = 0;
@@ -417,7 +493,9 @@ mlx5_tx_burst(void *dpdk_txq, struct rte_mbuf **pkts, uint16_t pkts_n)
 		if (pkts_n - i > 1)
 			rte_prefetch0(
 			    rte_pktmbuf_mtod(*(pkts + 1), volatile void *));
-		cs_flags = txq_ol_cksum_to_cs(txq, buf);
+		cs_flags = txq_ol_flags_to_verbs(txq, buf,
+						 (uint8_t *)&swp_offsets,
+						 &swp_types);
 		raw = ((uint8_t *)(uintptr_t)wqe) + 2 * MLX5_WQE_DWORD_SIZE;
 		/* Replace the Ethernet type by the VLAN if necessary. */
 		if (buf->ol_flags & PKT_TX_VLAN_PKT) {
@@ -445,69 +523,37 @@ mlx5_tx_burst(void *dpdk_txq, struct rte_mbuf **pkts, uint16_t pkts_n)
 		raw += MLX5_WQE_DWORD_SIZE;
 		tso = txq->tso_en && (buf->ol_flags & PKT_TX_TCP_SEG);
 		if (tso) {
-			uintptr_t end =
-				(uintptr_t)(((uintptr_t)txq->wqes) +
-					    (1 << txq->wqe_n) * MLX5_WQE_SIZE);
-			unsigned int copy_b;
-			uint8_t vlan_sz =
-				(buf->ol_flags & PKT_TX_VLAN_PKT) ? 4 : 0;
-			const uint64_t is_tunneled =
-				buf->ol_flags & (PKT_TX_TUNNEL_GRE |
-						 PKT_TX_TUNNEL_VXLAN);
+			int ret;
 
-			tso_header_sz = buf->l2_len + vlan_sz +
-					buf->l3_len + buf->l4_len;
-			tso_segsz = buf->tso_segsz;
-			if (unlikely(tso_segsz == 0)) {
-				txq->stats.oerrors++;
+			ret = process_tso(txq, buf, &raw, &max_wqe);
+			if (ret == -EINVAL) {
 				break;
-			}
-			if (is_tunneled	&& txq->tunnel_en) {
-				tso_header_sz += buf->outer_l2_len +
-						 buf->outer_l3_len;
-				cs_flags |= MLX5_ETH_WQE_L4_INNER_CSUM;
-			} else {
-				cs_flags |= MLX5_ETH_WQE_L4_CSUM;
-			}
-			if (unlikely(tso_header_sz > MLX5_MAX_TSO_HEADER)) {
-				txq->stats.oerrors++;
-				break;
-			}
-			copy_b = tso_header_sz - pkt_inline_sz;
-			/* First seg must contain all headers. */
-			assert(copy_b <= length);
-			if (copy_b && ((end - (uintptr_t)raw) > copy_b)) {
-				uint16_t n = (MLX5_WQE_DS(copy_b) - 1 + 3) / 4;
-
-				if (unlikely(max_wqe < n))
-					break;
-				max_wqe -= n;
-				rte_memcpy((void *)raw, (void *)addr, copy_b);
-				addr += copy_b;
-				length -= copy_b;
-				/* Include padding for TSO header. */
-				copy_b = MLX5_WQE_DS(copy_b) *
-					 MLX5_WQE_DWORD_SIZE;
-				pkt_inline_sz += copy_b;
-				raw += copy_b;
-			} else {
+			} else if (ret == -ENOMEM) {
 				/* NOP WQE. */
 				wqe->ctrl = (rte_v128u32_t){
-					rte_cpu_to_be_32(txq->wqe_ci << 8),
-					rte_cpu_to_be_32(txq->qp_num_8s | 1),
-					0,
-					0,
+						rte_cpu_to_be_32(txq->wqe_ci << 8),
+						rte_cpu_to_be_32(txq->qp_num_8s | 1),
+						0,
+						0,
 				};
 				ds = 1;
-#ifdef MLX5_PMD_SOFT_COUNTERS
 				total_length = 0;
-#endif
 				k++;
 				goto next_wqe;
+			} else {
+				tso_segsz = buf->tso_segsz;
+				if (unlikely(tso_segsz == 0)) {
+					txq->stats.oerrors++;
+					break;
+				}
+				addr += ret;
+				length -= ret;
+				pkt_inline_sz += ret;
+				tso_header_sz = pkt_inline_sz;
 			}
 		}
 		/* Inline if enough room. */
-		if (max_inline || tso) {
+		if (max_inline || unlikely(tso)) {
 			uint32_t inl = 0;
 			uintptr_t end = (uintptr_t)
 				(((uintptr_t)txq->wqes) +
@@ -652,7 +698,7 @@ next_pkt:
 		++i;
 		j += sg;
 		/* Initialize known and common part of the WQE structure. */
-		if (tso) {
+		if (unlikely(tso)) {
 			wqe->ctrl = (rte_v128u32_t){
 				rte_cpu_to_be_32((txq->wqe_ci << 8) |
 						 MLX5_OPCODE_TSO),
@@ -661,8 +707,9 @@ next_pkt:
 				0,
 			};
 			wqe->eseg = (rte_v128u32_t){
-				0,
-				cs_flags | (rte_cpu_to_be_16(tso_segsz) << 16),
+				swp_offsets,
+				cs_flags | (swp_types << 8) |
+					(rte_cpu_to_be_16(tso_segsz) << 16),
 				0,
 				(ehdr << 16) | rte_cpu_to_be_16(tso_header_sz),
 			};
@@ -675,8 +722,8 @@ next_pkt:
 				0,
 			};
 			wqe->eseg = (rte_v128u32_t){
-				0,
-				cs_flags,
+				swp_offsets,
+				cs_flags | (swp_types << 8),
 				0,
 				(ehdr << 16) | rte_cpu_to_be_16(pkt_inline_sz),
 			};

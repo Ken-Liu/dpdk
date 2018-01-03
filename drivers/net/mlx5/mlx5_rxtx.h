@@ -196,6 +196,7 @@ struct mlx5_txq_data {
 	uint16_t tso_en:1; /* When set hardware TSO is enabled. */
 	uint16_t tunnel_en:1;
 	/* When set TX offload for tunneled packets are supported. */
+	uint16_t swp_en:1; /* When set software parser is supported. */
 	uint16_t mpw_hdr_dseg:1; /* Enable DSEGs in the title WQEBB. */
 	uint16_t max_inline; /* Multiple of RTE_CACHE_LINE_SIZE to inline. */
 	uint16_t inline_max_packet_sz; /* Max packet size for inlining. */
@@ -623,6 +624,80 @@ mlx5_tx_dbrec(struct mlx5_txq_data *txq, volatile struct mlx5_wqe *wqe)
 }
 
 /**
+ * Convert mbuf tx offloads info to Verbs.
+ *
+ * @param txq_data
+ *   Pointer to the Tx queue.
+ * @param buf
+ *   Pointer to the mbuf.
+ * @param offsets
+ *   Pointer to the header offsets.
+ * @param swp_types
+ *   Pointer to the swp types.
+ *
+ * @return
+ *   the converted cs_flags.
+ */
+static __rte_always_inline uint8_t
+txq_ol_flags_to_verbs(struct mlx5_txq_data *txq_data, struct rte_mbuf *buf,
+		   uint8_t *offsets, uint8_t *swp_types)
+{
+	uint8_t cs_flags = 0;
+	uint8_t vlan_sz = (buf->ol_flags & PKT_TX_VLAN_PKT) ? 4 : 0;
+	const uint8_t tunnel = txq_data->tunnel_en &&
+			       (buf->ol_flags & PKT_TX_TUNNEL_MASK);
+	const uint8_t tso = txq_data->tso_en &&
+			    (buf->ol_flags & PKT_TX_TCP_SEG);
+	uint16_t off = buf->outer_l2_len + vlan_sz;
+
+	if (likely(!tso && !(buf->ol_flags &
+	    (PKT_TX_IP_CKSUM | PKT_TX_TCP_CKSUM | PKT_TX_UDP_CKSUM |
+	     PKT_TX_OUTER_IP_CKSUM))))
+		return cs_flags;
+	if (likely(!tunnel)) {
+		if (buf->ol_flags & PKT_TX_IP_CKSUM)
+			cs_flags = MLX5_ETH_WQE_L3_CSUM;
+		if (tso || (buf->ol_flags & PKT_TX_L4_MASK))
+			cs_flags |= MLX5_ETH_WQE_L4_CSUM;
+		return cs_flags;
+	}
+	/* Tunneled packets */
+	if (buf->ol_flags & PKT_TX_OUTER_IP_CKSUM)
+		cs_flags = MLX5_ETH_WQE_L3_CSUM;
+	if (buf->ol_flags & PKT_TX_IP_CKSUM)
+		cs_flags |= MLX5_ETH_WQE_L3_INNER_CSUM;
+	if (tso || (buf->ol_flags & PKT_TX_L4_MASK))
+		cs_flags |= MLX5_ETH_WQE_L4_INNER_CSUM;
+	if (!txq_data->swp_en) /* HW offloading, only set csum flags*/
+		return cs_flags;
+	/* SW Parer enabled */
+	if (tso || (buf->ol_flags & PKT_TX_OUTER_IP_CKSUM)) {
+		offsets[1] = off >> 1; /* Outer L3 offset */
+		if (buf->ol_flags & PKT_TX_OUTER_IPV6)
+			*swp_types |= MLX5_ETH_OUTER_L3_IPV6;
+	}
+	off += buf->outer_l3_len;
+	/* TODO is outer L4 required? */
+	if (tso && (buf->ol_flags & PKT_TX_TUNNEL_VXLAN)) {
+		offsets[0] = off >> 1; /* Outer L4 offset */
+		*swp_types |= MLX5_ETH_OUTER_L4_UDP;
+	}
+	off += buf->l2_len;
+	if (tso || (buf->ol_flags & PKT_TX_IP_CKSUM)) {
+		offsets[3] = off >> 1; /* Inner L3 offset */
+		if (buf->ol_flags & PKT_TX_IPV6)
+			*swp_types |= MLX5_ETH_INNER_L3_IPV6;
+	}
+	if (tso || (buf->ol_flags & PKT_TX_L4_MASK)) {
+		off += buf->l3_len;
+		offsets[2] = off >> 1; /* Inner L4 offset */
+		if ((buf->ol_flags & PKT_TX_L4_MASK) == PKT_TX_UDP_CKSUM)
+			*swp_types |= MLX5_ETH_INNER_L4_UDP;
+	}
+	return cs_flags;
+}
+
+/**
  * Convert the Checksum offloads to Verbs.
  *
  * @param txq_data
@@ -636,24 +711,9 @@ mlx5_tx_dbrec(struct mlx5_txq_data *txq, volatile struct mlx5_wqe *wqe)
 static __rte_always_inline uint8_t
 txq_ol_cksum_to_cs(struct mlx5_txq_data *txq_data, struct rte_mbuf *buf)
 {
-	uint8_t cs_flags = 0;
-
-	/* Should we enable HW CKSUM offload */
-	if (buf->ol_flags &
-	    (PKT_TX_IP_CKSUM | PKT_TX_TCP_CKSUM | PKT_TX_UDP_CKSUM)) {
-		if (txq_data->tunnel_en &&
-		    (buf->ol_flags &
-		     (PKT_TX_TUNNEL_GRE | PKT_TX_TUNNEL_VXLAN))) {
-			cs_flags = MLX5_ETH_WQE_L3_INNER_CSUM |
-				   MLX5_ETH_WQE_L4_INNER_CSUM;
-			if (buf->ol_flags & PKT_TX_OUTER_IP_CKSUM)
-				cs_flags |= MLX5_ETH_WQE_L3_CSUM;
-		} else {
-			cs_flags = MLX5_ETH_WQE_L3_CSUM |
-				   MLX5_ETH_WQE_L4_CSUM;
-		}
-	}
-	return cs_flags;
+	uint32_t offsets;
+	uint8_t swp_types;
+	return txq_ol_flags_to_verbs(txq_data, buf, (uint8_t *)&offsets, &swp_types);
 }
 
 /**
