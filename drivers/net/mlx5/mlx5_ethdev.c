@@ -1400,7 +1400,8 @@ priv_select_tx_function(struct priv *priv, struct rte_eth_dev *dev)
 	uint64_t tx_offloads = dev->data->dev_conf.txmode.offloads;
 	int tso = !!(tx_offloads & (DEV_TX_OFFLOAD_TCP_TSO |
 				    DEV_TX_OFFLOAD_VXLAN_TNL_TSO |
-				    DEV_TX_OFFLOAD_GRE_TNL_TSO));
+				    DEV_TX_OFFLOAD_GRE_TNL_TSO |
+				    DEV_TX_OFFLOAD_COMMON_TNL));
 	int vlan_insert = !!(tx_offloads & DEV_TX_OFFLOAD_VLAN_INSERT);
 
 	assert(priv != NULL);

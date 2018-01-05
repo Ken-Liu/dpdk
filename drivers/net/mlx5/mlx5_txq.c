@@ -143,6 +143,8 @@ mlx5_priv_get_tx_port_offloads(struct priv *priv)
 		if (config->tso)
 			offloads |= (DEV_TX_OFFLOAD_VXLAN_TNL_TSO |
 				     DEV_TX_OFFLOAD_GRE_TNL_TSO);
+		if (config->swp)
+			offloads |= DEV_TX_OFFLOAD_COMMON_TNL;
 	}
 	return offloads;
 }
@@ -729,7 +731,8 @@ txq_set_params(struct mlx5_txq_ctrl *txq_ctrl)
 		txq_ctrl->txq.tso_en = 1;
 	}
 	txq_ctrl->txq.tunnel_en = config->tunnel_en;
-	txq_ctrl->txq.swp_en = config->swp;
+	txq_ctrl->txq.swp_en = config->swp && !!(txq_ctrl->txq.offloads &
+				  DEV_TX_OFFLOAD_COMMON_TNL);
 }
 
 /**
