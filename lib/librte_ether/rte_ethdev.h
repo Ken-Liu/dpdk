@@ -1003,6 +1003,8 @@ struct rte_eth_conf {
  *   the same mempool and has refcnt = 1.
  */
 #define DEV_TX_OFFLOAD_SECURITY         0x00020000
+/**< Common tunnel TSO and Outer/Inner CKSUM. */
+#define DEV_TX_OFFLOAD_COMMON_TNL       0x00040000
 
 struct rte_pci_device;
 
