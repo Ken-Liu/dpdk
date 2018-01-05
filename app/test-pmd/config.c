@@ -739,6 +739,15 @@ port_offload_cap_display(portid_t port_id)
 			printf("off\n");
 	}
 
+	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_COMMON_TNL) {
+		printf("TX common tunnel TSO and checksum:  ");
+		if (ports[port_id].dev_conf.txmode.offloads &
+		       DEV_TX_OFFLOAD_COMMON_TNL)
+			printf("on\n");
+		else
+			printf("off\n");
+	}
+
 }
 
 int
