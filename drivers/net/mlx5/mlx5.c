@@ -91,6 +91,9 @@
 /* Device parameter to enable hardware Rx vector. */
 #define MLX5_RX_VEC_EN "rx_vec_en"
 
+/* Device parameter to enable TX SW parser. */
+#define MLX5_TX_SWP "swp"
+
 #ifndef HAVE_IBV_MLX5_MOD_MPW
 #define MLX5DV_CONTEXT_FLAGS_MPW_ALLOWED (1 << 2)
 #define MLX5DV_CONTEXT_FLAGS_ENHANCED_MPW (1 << 3)
@@ -407,6 +410,8 @@ mlx5_args_check(const char *key, const char *val, void *opaque)
 		config->tx_vec_en = !!tmp;
 	} else if (strcmp(MLX5_RX_VEC_EN, key) == 0) {
 		config->rx_vec_en = !!tmp;
+	} else if (strcmp(MLX5_TX_SWP, key) == 0) {
+		config->swp = !!tmp;
 	} else {
 		WARN("%s: unknown parameter", key);
 		return -EINVAL;
@@ -437,6 +442,7 @@ mlx5_args(struct mlx5_dev_config *config, struct rte_devargs *devargs)
 		MLX5_TXQ_MAX_INLINE_LEN,
 		MLX5_TX_VEC_EN,
 		MLX5_RX_VEC_EN,
+		MLX5_TX_SWP,
 		NULL,
 	};
 	struct rte_kvargs *kvlist;
@@ -629,6 +635,7 @@ mlx5_pci_probe(struct rte_pci_driver *pci_drv, struct rte_pci_device *pci_dev)
 			.txq_inline = MLX5_ARG_UNSET,
 			.txqs_inline = MLX5_ARG_UNSET,
 			.inline_max_packet_sz = MLX5_ARG_UNSET,
+			.swp = 1,
 		};
 
 		mlx5_dev[idx].ports |= test;
